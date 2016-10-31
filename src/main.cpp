@@ -1,14 +1,22 @@
 // helpful links:
 // http://nerdclub-uk.blogspot.com/2016/06/playing-audio-with-wtv020m01-and-arduino.html
 
+// TODO: maybe implement debouncing if we want to/care:
+// https://www.arduino.cc/en/Tutorial/Debounce
+
+// the creeky door sound should override any other sound effect or button activity
+// the doorbell should kill the other sounds, except for creeky door
+// the other buttons, if pressed while another of those sounds are playing, should kill the sound effect
+
 #include <Arduino.h>
 #include <SPI.h>
 
 // you can pass these to play sounds as well
-#define DOORBELL 0x0000
-#define CREEKY_DOOR 0x0001
+#define CREEKY_DOOR 0x0000
+#define DOORBELL 0x0001
 #define SCARY_LAUGH 0x0002
 #define THUNDER 0x0003
+#define SOUND_FIVE 0x0004
 // add more sounds here...
 
 // convenient commands for reference:
@@ -32,7 +40,10 @@ int buttonStates[5];
 
 // we'll assume we're not playing on boot
 bool playing = false;
-bool playingDoorbell = false; // set when the doorbell sound should be playing
+bool playingCreekyDoor = false; // set when we play the creeky door,
+                                // which overrides all other sounds
+bool playingDoorbell = false; // set when the doorbell sound should be playing,
+                              //overriding any sound except creeky door
 
 //
 void setup () {
@@ -94,9 +105,15 @@ void sendSPIMessage(uint16_t message) {
   playing = false;
 }
 
+// read the MP3 chip's active pin to see if we're playing a sound
+bool isPlayingSound() {
+  return digitalRead(SLAVE_IS_PLAYING_PIN);
+}
+
 //
 void loop () {
   // loooooooping
+
   int buttonDown = readButtonStates();
 
   // TODO: the doorbell sound effect is a special case and should be a
@@ -120,5 +137,30 @@ void loop () {
     default:
       // do nothing
     break;
+  }
+
+  // TODO: implement some effect object to tell us what to do on each loop, handle debouncing etc
+  if (playingCreekyDoor) {
+    // do nothing basically ever, under we're no longer playing
+    if (!isPlayingSound()) {
+      // guess we're done playing a sound
+      playingCreekyDoor = false;
+      return; // just leave for now
+    }
+  }
+
+  // doorbell can only be overridden by the creeky door sound
+  if (playingDoorbell) {
+    // do nothing, unless we're going to play the creeky door instead
+    // NOTE: if (shouldPlayCreepySound) { do it}
+    if (!isPlayingSound()) {
+      playingDoorbell = false;
+      return;
+    }
+  }
+
+  // the other sounds can override eachother
+  if (isPlayingSound()) {
+    // cool whatever
   }
 }
