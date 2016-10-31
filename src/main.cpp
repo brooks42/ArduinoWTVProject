@@ -36,13 +36,7 @@
 
 #define SLAVE_IS_PLAYING_PIN 8 // a pin set high while the "MP3 player" is playing
 
-// we'll assume we're not playing on boot
-bool playing = false;
-bool playingCreekyDoor = false; // set when we play the creeky door,
-// which overrides all other sounds
-bool playingDoorbell = false; // set when the doorbell sound should be playing,
-//overriding any sound except creeky door
-
+// the event structure we use to manage our state
 struct Event {
   int currentSound; // the sound we're currently playing in this event
 
@@ -95,7 +89,6 @@ int parseButtonStates (int* buttonStates) {
 // http://www.datasheet-pdf.info/entry/WTV020M01
 // begin the SPI communications:
 void sendSPIMessage(uint16_t message) {
-  playing = true; // just in case
   /*
   With most SPI devices, after SPI.beginTransaction(), you will write the
   slave select pin LOW, call SPI.transfer() any number of times to transfer
@@ -104,7 +97,6 @@ void sendSPIMessage(uint16_t message) {
   SPI.beginTransaction(SPISettings(14000000, MSBFIRST, SPI_MODE0));
   SPI.transfer16(message); // send the 16-bit message
   SPI.endTransaction();
-  playing = false;
 }
 
 // read the MP3 chip's active pin to see if we're playing a sound
@@ -113,8 +105,9 @@ bool isPlayingSound() {
 }
 
 // compile a little event
-Event* buildEventTick() {
-  Event *tempEvent;
+Event buildEventTick() {
+
+  Event tempEvent;
 
   // populate the button states...
   tempEvent.buttonStates[0] = digitalRead(BUTTON_PIN_1);
@@ -123,11 +116,16 @@ Event* buildEventTick() {
   tempEvent.buttonStates[3] = digitalRead(BUTTON_PIN_4);
   tempEvent.buttonStates[4] = digitalRead(BUTTON_PIN_5);
 
-  // don't try this on the first tick, so we don't crash
-  if (lastTick != NULL) {
-    tempEvent.previousButtonStates = lastTick.buttonStates;
-  } else {
+  // populate this tick's previous array with the last tick's current one
+  for (int i = 0; i < 4; i++) {
+    tempEvent.previousButtonStates[i] = lastTick.buttonStates[i];
+  }
 
+  // now if we're playing a sound, populate the sound variable
+  if (isPlayingSound()) {
+    tempEvent.currentSound = lastTick.currentSound;
+  } else {
+    tempEvent.currentSound = -1; // no sound
   }
 
   return tempEvent;
@@ -136,75 +134,55 @@ Event* buildEventTick() {
 // returns true if the button was LOW in the previous tick and is now HIGH
 bool buttonWasPressed(int button, Event event) {
   if (event.buttonStates[button] == HIGH &&
-     event.previousButtonStates[button] == LOW) {
-       return true;
-  }
-  return false;
-}
-
-//
-void loop () {
-  // loooooooping
-  Event thisTick = buildEventTick();
-
-  // TODO: implement some effect object to tell us what to do on each loop, handle debouncing etc
-  if (playingCreekyDoor) {
-    // do nothing basically ever, under we're no longer playing
-    if (!isPlayingSound()) {
-      // guess we're done playing the creeky door sound
-      playingCreekyDoor = false;
-      return; // just leave for now
+    event.previousButtonStates[button] == LOW) {
+      return true;
     }
-  } else {
-    // time to play some creepy door
-    if (buttonWasPressed(CREEKY_DOOR, thisTick)) {
-      sendSPIMessage(STOP);
-      sendSPIMessage(CREEKY_DOOR);
-      playingCreekyDoor = true;
-      playingDoorbell = false; // just in case we interrupted the doorbell
-    }
+    return false;
   }
 
-  // doorbell can only be overridden by the creeky door sound
-  if (playingDoorbell) {
-    // do nothing, unless we're going to play the creeky door instead
-    // NOTE: if (shouldPlayCreepySound) { do it}
-    if (!isPlayingSound()) {
-      playingDoorbell = false;
-      return;
-    }
-  } else {
-    if (buttonWasPressed(DOORBELL, thisTick)) {
-      sendSPIMessage(STOP);
-      sendSPIMessage(DOORBELL);
-      playingDoorbell = true;
-    }
+// plays a sound and manipulates our current state to help track
+  void playSound(uint16_t sound, Event tick) {
+    sendSPIMessage(STOP);
+    sendSPIMessage(sound);
+    tick.currentSound = sound;
   }
 
-  // the other sounds can override eachother
-  int buttonDown = -1;
-  for (int i = 2; i < 4; i++) {
-    if (buttonWasPressed(i, thisTick)) {
-      buttonDown = i;
-      break; // just use whatever button they hit first, no biggy
+  //
+  void loop () {
+    // loooooooping
+    Event thisTick = buildEventTick();
+    int soundToPlayIfAny = -1;
+
+    // creeky door overrides everything
+    if (thisTick.currentSound == CREEKY_DOOR) {
+      lastTick = thisTick;
+      delay(50); // help with debouncing
+      return; // we're stuck going until the sound is finished
     }
-  }
 
-  switch (buttonDown) {
-    case CREEKY_DOOR:
-    sendSPIMessage(CREEKY_DOOR);
-    break;
-    case SCARY_LAUGH:
-    sendSPIMessage(SCARY_LAUGH);
-    break;
-    case THUNDER:
-    sendSPIMessage(THUNDER);
-    break;
-    default:
-    // do nothing
-    break;
-  }
+    // the other sounds can override eachother
+    int buttonDown = -1;
+    for (int i = 0; i < 4; i++) {
+      if (buttonWasPressed(i, thisTick)) {
+        buttonDown = i;
+        break; // just use whatever button they hit first, no biggy
+      }
+    }
 
-  lastTick = thisTick;
-  delay(50); // help with debouncing
-}
+    // if the button we've tapped is a lower value (higher priority) than
+    // the current sound, replace it (so CREEKY_DOOR will replace DOORBELL, but
+    // not the other way around, etc, but the last 3 sounds will all replace
+    // eachother)
+    if (buttonDown < thisTick.currentSound ||
+       (buttonDown > 1 && thisTick.currentSound > 1)) {
+      soundToPlayIfAny = buttonDown;
+    }
+
+    //
+    if (soundToPlayIfAny != -1) {
+      playSound(soundToPlayIfAny, thisTick);
+    }
+
+    lastTick = thisTick;
+    delay(50); // help with debouncing
+  }
