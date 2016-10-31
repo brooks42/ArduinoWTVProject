@@ -41,9 +41,9 @@ int buttonStates[5];
 // we'll assume we're not playing on boot
 bool playing = false;
 bool playingCreekyDoor = false; // set when we play the creeky door,
-                                // which overrides all other sounds
+// which overrides all other sounds
 bool playingDoorbell = false; // set when the doorbell sound should be playing,
-                              //overriding any sound except creeky door
+//overriding any sound except creeky door
 
 //
 void setup () {
@@ -116,29 +116,6 @@ void loop () {
 
   int buttonDown = readButtonStates();
 
-  // TODO: the doorbell sound effect is a special case and should be a
-  // press-and-hold deal, so we'll need a state variable for that button
-  //  specifically
-  switch (buttonDown) {
-    case DOORBELL:
-      // special case already
-      sendSPIMessage(DOORBELL);
-      // special doorbell code
-    break;
-    case CREEKY_DOOR:
-      sendSPIMessage(CREEKY_DOOR);
-    break;
-    case SCARY_LAUGH:
-      sendSPIMessage(SCARY_LAUGH);
-    break;
-    case THUNDER:
-      sendSPIMessage(THUNDER);
-    break;
-    default:
-      // do nothing
-    break;
-  }
-
   // TODO: implement some effect object to tell us what to do on each loop, handle debouncing etc
   if (playingCreekyDoor) {
     // do nothing basically ever, under we're no longer playing
@@ -146,6 +123,12 @@ void loop () {
       // guess we're done playing a sound
       playingCreekyDoor = false;
       return; // just leave for now
+    }
+  } else {
+    if (buttonDown == CREEKY_DOOR) {
+      sendSPIMessage(STOP);
+      sendSPIMessage(CREEKY_DOOR);
+      playingCreekyDoor = true;
     }
   }
 
@@ -157,10 +140,24 @@ void loop () {
       playingDoorbell = false;
       return;
     }
+  } else {
+    if (buttonDown == DOORBELL) {
+      sendSPIMessage(STOP);
+      sendSPIMessage(DOORBELL);
+      playingDoorbell = true;
+    }
   }
-
+  
   // the other sounds can override eachother
-  if (isPlayingSound()) {
-    // cool whatever
+  switch (buttonDown) {
+    case CREEKY_DOOR:
+    sendSPIMessage(CREEKY_DOOR);
+    break;
+    case SCARY_LAUGH:
+    sendSPIMessage(SCARY_LAUGH);
+    break;
+    case THUNDER:
+    sendSPIMessage(THUNDER);
+    break;
   }
 }
