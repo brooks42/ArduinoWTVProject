@@ -1,5 +1,6 @@
 // helpful links:
 // http://nerdclub-uk.blogspot.com/2016/06/playing-audio-with-wtv020m01-and-arduino.html
+// http://www.instructables.com/id/How-to-use-WTV020SD-16P-with-Arduino/
 
 // TODO: maybe implement debouncing if we want to/care:
 // https://www.arduino.cc/en/Tutorial/Debounce
@@ -12,12 +13,14 @@
 #include <SPI.h>
 
 // you can pass these to play sounds as well
+// these will have to e in this order, please don't mess with this if you can help it
+// it's used in the program to compare array indices etc
 #define CREEKY_DOOR 0x0000
 #define DOORBELL 0x0001
 #define SCARY_LAUGH 0x0002
 #define THUNDER 0x0003
 #define SOUND_FIVE 0x0004
-// add more sounds here...
+// add more sounds here if you want...
 
 // convenient commands for reference:
 #define STOP 0xFFFF // stop the device
@@ -25,14 +28,14 @@
 #define HIGH_VOLUME 0xFFF7 // set volume to 7
 
 // various pins for button input
-#define BUTTON_PIN_1 1
-#define BUTTON_PIN_2 2
-#define BUTTON_PIN_3 3
-#define BUTTON_PIN_4 4
-#define BUTTON_PIN_5 5
+#define BUTTON_PIN_1 2 // creepy door
+#define BUTTON_PIN_2 3 // doorbell
+#define BUTTON_PIN_3 4 // others below, order not important...
+#define BUTTON_PIN_4 5
+#define BUTTON_PIN_5 6
 
-#define SPI_SLAVE_PIN 6 // set low to write to SPI slave devices
-#define SPI_TRANSFER_PIN 7 // data I/O pin
+#define SPI_MOSI_PIN 11
+#define SPI_CLOCK_PIN 13
 
 #define SLAVE_IS_PLAYING_PIN 8 // a pin set high while the "MP3 player" is playing
 
@@ -51,6 +54,12 @@ Event lastTick; // last event we did, to help with debouncing
 //
 void setup () {
 
+  // start serial so we can debug later if we need to (hopefully not lol)
+  Serial.begin(9600);
+
+  //
+  SPI.begin();
+
   // button pins
   pinMode(BUTTON_PIN_1, INPUT);
   pinMode(BUTTON_PIN_2, INPUT);
@@ -58,11 +67,11 @@ void setup () {
   pinMode(BUTTON_PIN_4, INPUT);
   pinMode(BUTTON_PIN_5, INPUT);
 
-  //
-  pinMode(SPI_SLAVE_PIN, OUTPUT);
-  pinMode(SPI_TRANSFER_PIN, OUTPUT);
+  // SPI comm pins
+  pinMode(SPI_MOSI_PIN, OUTPUT);
+  pinMode(SPI_CLOCK_PIN, OUTPUT);
 
-  //
+  // busy pin
   pinMode(SLAVE_IS_PLAYING_PIN, INPUT);
 }
 
@@ -77,7 +86,7 @@ int parseButtonStates (int* buttonStates) {
     if (buttonSet == -1) {
       buttonSet = i; // set i to the pressed button
     } else {
-      return -1; // we've got at least 2 buttons pressed so break
+      return -1; // we've got at least 2 buttons pressed, so die
     }
   }
 
@@ -89,13 +98,15 @@ int parseButtonStates (int* buttonStates) {
 // http://www.datasheet-pdf.info/entry/WTV020M01
 // begin the SPI communications:
 void sendSPIMessage(uint16_t message) {
+  // this is the method where the magic happens
   /*
-  With most SPI devices, after SPI.beginTransaction(), you will write the
+  "With most SPI devices, after SPI.beginTransaction(), you will write the
   slave select pin LOW, call SPI.transfer() any number of times to transfer
-  data, then write the SS pin HIGH, and finally call SPI.endTransaction().
+  data, then write the SS pin HIGH, and finally call SPI.endTransaction()."
   */
+  digitalWrite(SPI_CLOCK_PIN, LOW); // write the clock pin low
   SPI.beginTransaction(SPISettings(14000000, MSBFIRST, SPI_MODE0));
-  SPI.transfer16(message); // send the 16-bit message
+  SPI.transfer16(message); // send the 16-bit message, should work with just this call
   SPI.endTransaction();
 }
 
@@ -104,7 +115,7 @@ bool isPlayingSound() {
   return digitalRead(SLAVE_IS_PLAYING_PIN);
 }
 
-// compile a little event
+// compile a little event to help with state management
 Event buildEventTick() {
 
   Event tempEvent;
@@ -121,7 +132,7 @@ Event buildEventTick() {
     tempEvent.previousButtonStates[i] = lastTick.buttonStates[i];
   }
 
-  // now if we're playing a sound, populate the sound variable
+  // now if we're playing a sound, populate the sound variable too
   if (isPlayingSound()) {
     tempEvent.currentSound = lastTick.currentSound;
   } else {
@@ -138,9 +149,9 @@ bool buttonWasPressed(int button, Event event) {
       return true;
     }
     return false;
-  }
+}
 
-// plays a sound and manipulates our current state to help track
+  // plays a sound and manipulates our current state to help track
   void playSound(uint16_t sound, Event tick) {
     sendSPIMessage(STOP);
     sendSPIMessage(sound);
@@ -174,15 +185,15 @@ bool buttonWasPressed(int button, Event event) {
     // not the other way around, etc, but the last 3 sounds will all replace
     // eachother)
     if (buttonDown < thisTick.currentSound ||
-       (buttonDown > 1 && thisTick.currentSound > 1)) {
-      soundToPlayIfAny = buttonDown;
-    }
+      (buttonDown > 1 && thisTick.currentSound > 1)) {
+        soundToPlayIfAny = buttonDown;
+      }
 
-    //
-    if (soundToPlayIfAny != -1) {
-      playSound(soundToPlayIfAny, thisTick);
-    }
+      //
+      if (soundToPlayIfAny != -1) {
+        playSound(soundToPlayIfAny, thisTick);
+      }
 
-    lastTick = thisTick;
-    delay(50); // help with debouncing
-  }
+      lastTick = thisTick;
+      delay(50); // help with debouncing
+    }
