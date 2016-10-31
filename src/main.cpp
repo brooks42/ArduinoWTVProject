@@ -31,8 +31,6 @@
 #define BUTTON_PIN_4 4
 #define BUTTON_PIN_5 5
 
-int buttonStates[5];
-
 #define SPI_SLAVE_PIN 6 // set low to write to SPI slave devices
 #define SPI_TRANSFER_PIN 7 // data I/O pin
 
@@ -44,6 +42,17 @@ bool playingCreekyDoor = false; // set when we play the creeky door,
 // which overrides all other sounds
 bool playingDoorbell = false; // set when the doorbell sound should be playing,
 //overriding any sound except creeky door
+
+struct Event {
+  int currentSound; // the sound we're currently playing in this event
+
+  // together the below 2 arrays let us calculate button deltas for debouncing
+  // if one is HIGH and one is LOW, there was a button delta to that state
+  int previousButtonStates[5]; // the button states of the previous event
+  int buttonStates[5]; // the button states for this event
+};
+
+Event lastTick; // last event we did, to help with debouncing
 
 //
 void setup () {
@@ -66,16 +75,9 @@ void setup () {
 // so with this method we check the button states. If any one button is down, we
 // return that button's index
 // if more than one button is down, or no buttons are down, we return -1
-int readButtonStates () {
+int parseButtonStates (int* buttonStates) {
 
   int buttonSet = -1;
-
-  // read all of the button states...
-  buttonStates[0] = digitalRead(BUTTON_PIN_1);
-  buttonStates[1] = digitalRead(BUTTON_PIN_2);
-  buttonStates[2] = digitalRead(BUTTON_PIN_3);
-  buttonStates[3] = digitalRead(BUTTON_PIN_4);
-  buttonStates[4] = digitalRead(BUTTON_PIN_5);
 
   for (int i = 0; i < 4; i++) {
     if (buttonSet == -1) {
@@ -110,25 +112,56 @@ bool isPlayingSound() {
   return digitalRead(SLAVE_IS_PLAYING_PIN);
 }
 
+// compile a little event
+Event* buildEventTick() {
+  Event *tempEvent;
+
+  // populate the button states...
+  tempEvent.buttonStates[0] = digitalRead(BUTTON_PIN_1);
+  tempEvent.buttonStates[1] = digitalRead(BUTTON_PIN_2);
+  tempEvent.buttonStates[2] = digitalRead(BUTTON_PIN_3);
+  tempEvent.buttonStates[3] = digitalRead(BUTTON_PIN_4);
+  tempEvent.buttonStates[4] = digitalRead(BUTTON_PIN_5);
+
+  // don't try this on the first tick, so we don't crash
+  if (lastTick != NULL) {
+    tempEvent.previousButtonStates = lastTick.buttonStates;
+  } else {
+
+  }
+
+  return tempEvent;
+}
+
+// returns true if the button was LOW in the previous tick and is now HIGH
+bool buttonWasPressed(int button, Event event) {
+  if (event.buttonStates[button] == HIGH &&
+     event.previousButtonStates[button] == LOW) {
+       return true;
+  }
+  return false;
+}
+
 //
 void loop () {
   // loooooooping
-
-  int buttonDown = readButtonStates();
+  Event thisTick = buildEventTick();
 
   // TODO: implement some effect object to tell us what to do on each loop, handle debouncing etc
   if (playingCreekyDoor) {
     // do nothing basically ever, under we're no longer playing
     if (!isPlayingSound()) {
-      // guess we're done playing a sound
+      // guess we're done playing the creeky door sound
       playingCreekyDoor = false;
       return; // just leave for now
     }
   } else {
-    if (buttonDown == CREEKY_DOOR) {
+    // time to play some creepy door
+    if (buttonWasPressed(CREEKY_DOOR, thisTick)) {
       sendSPIMessage(STOP);
       sendSPIMessage(CREEKY_DOOR);
       playingCreekyDoor = true;
+      playingDoorbell = false; // just in case we interrupted the doorbell
     }
   }
 
@@ -141,14 +174,22 @@ void loop () {
       return;
     }
   } else {
-    if (buttonDown == DOORBELL) {
+    if (buttonWasPressed(DOORBELL, thisTick)) {
       sendSPIMessage(STOP);
       sendSPIMessage(DOORBELL);
       playingDoorbell = true;
     }
   }
-  
+
   // the other sounds can override eachother
+  int buttonDown = -1;
+  for (int i = 2; i < 4; i++) {
+    if (buttonWasPressed(i, thisTick)) {
+      buttonDown = i;
+      break; // just use whatever button they hit first, no biggy
+    }
+  }
+
   switch (buttonDown) {
     case CREEKY_DOOR:
     sendSPIMessage(CREEKY_DOOR);
@@ -159,5 +200,11 @@ void loop () {
     case THUNDER:
     sendSPIMessage(THUNDER);
     break;
+    default:
+    // do nothing
+    break;
   }
+
+  lastTick = thisTick;
+  delay(50); // help with debouncing
 }
